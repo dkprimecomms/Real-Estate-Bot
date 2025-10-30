@@ -1,4 +1,6 @@
 fastapi
 uvicorn
+pydantic<3
 boto3
-pydantic
+python-dotenv
+starlette
