@@ -1,5 +1,4 @@
-# backend.py
-# pip install fastapi uvicorn "pydantic<3" python-dotenv boto3
+# app.py
 from typing import Tuple, Optional, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -8,7 +7,7 @@ import os
 import boto3, json
 from botocore.exceptions import ClientError
 from string import Template
-from dotenv import load_dotenv
+# from dotenv import load_dotenv  <-- REMOVED FOR APP RUNNER
 import logging
 import sys
 from fastapi.responses import FileResponse
@@ -24,16 +23,6 @@ logger = logging.getLogger("backend")
 # ---- In-memory session memory (per-process; swap to Redis for prod) ----
 SESSION_MEM: Dict[str, Dict[str, str]] = {}  # { session_id: {"last_property": "South Bend IN"} }
 
-# def get_last_property(session_id: Optional[str]) -> Optional[str]:
-#     if not session_id:
-#         return None
-#     return SESSION_MEM.get(session_id, {}).get("last_property")
-
-# def set_last_property(session_id: Optional[str], prop: Optional[str]) -> None:
-#     if not session_id or not prop:
-#         return
-#     rec = SESSION_MEM.setdefault(session_id, {})
-#     rec["last_property"] = prop
 
 def is_none_like(val: Optional[str]) -> bool:
     v = (val or "").strip().strip('"').strip("'").lower()
@@ -48,13 +37,14 @@ def serve_homepage():
     # Get path to index.html in the same directory as this script
     current_dir = os.path.dirname(os.path.abspath(__file__))
     index_path = os.path.join(current_dir, "index.html")
+    # Make sure index.html is in your repository root
     return FileResponse(index_path, media_type="text/html")
 
 # If you truly need credentials (cookies/Authorization), list explicit origins instead of "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # change to ["http://localhost:3000"] in dev if you need credentials
-    allow_credentials=False,      # browsers block "*" + credentials=True; set False for wildcard
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,7 +61,7 @@ class Out(BaseModel):
 
 # ---- Property extractor (Bedrock Runtime) ----
 def extract_key(query: str) -> str:
-    load_dotenv()
+    # load_dotenv()  <-- REMOVED
     runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
     prompt_template = Template("""
@@ -135,7 +125,8 @@ $query
 
 # ---- Main KB call (Bedrock Agent Runtime) ----
 def LLMcall(query: str, session_id: Optional[str], prop_filter: Optional[str]) -> Tuple[str, str, str]:
-    load_dotenv()
+    # load_dotenv()  <-- REMOVED
+    # AWS_REGION is now correctly read from App Runner environment variables
     AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
     client = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
 
@@ -176,8 +167,8 @@ $output_format_instructions$
 
     # 3) Build KB config (put generationConfiguration INSIDE knowledgeBaseConfiguration)
     kb_cfg = {
-        "knowledgeBaseId": os.getenv("KNOWLEDGE_BASE_ID"),
-        "modelArn": os.getenv("MODEL_ARN"),
+        "knowledgeBaseId": os.getenv("KNOWLEDGE_BASE_ID"),  # Reads directly from App Runner env var
+        "modelArn": os.getenv("MODEL_ARN"),                # Reads directly from App Runner env var
         "retrievalConfiguration": {
             "vectorSearchConfiguration": {
                 "numberOfResults": 20
