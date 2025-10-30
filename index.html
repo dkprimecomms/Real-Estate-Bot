@@ -118,132 +118,133 @@
   </div>
 
  <script>
-  // ==== Config: set your backend origin if different port/origin ====
-  // In dev, always point to your FastAPI backend
-  const BACKEND_URL = '';
+ // ==== Config: set your backend origin if different port/origin ====
+ const BACKEND_URL = '';
 
-  // ==== Session helpers ====
-  const SID_KEY = 'session_id';
-  function getSessionId() { return localStorage.getItem(SID_KEY); }
-  function setSessionId(sid) {
-    if (!sid) return;
-    const current = getSessionId();
-    if (current !== sid) {
-      localStorage.setItem(SID_KEY, sid);
-      updateSidPill();
-    }
-  }
-  function updateSidPill() {
-    const pill = document.getElementById('sid-pill');
-    if (pill) pill.textContent = getSessionId() || 'none';
-  }
+ // ==== Session helpers (USING sessionStorage for refresh/close clearing) ====
+ const SID_KEY = 'session_id';
+ function getSessionId() { return sessionStorage.getItem(SID_KEY); }
+ function setSessionId(sid) {
+    if (!sid) return;
+    const current = getSessionId();
+    if (current !== sid) {
+       sessionStorage.setItem(SID_KEY, sid);
+       updateSidPill();
+    }
+ }
+ function updateSidPill() {
+    const pill = document.getElementById('sid-pill');
+    if (pill) pill.textContent = getSessionId() || 'none';
+ }
 
-  // ==== Filter storage (filter_one) ====
-  const FILTER_KEY = 'filter_one';
-  function getFilterOne() {
-    const raw = localStorage.getItem(FILTER_KEY);
-    return raw === null ? null : JSON.parse(raw); // preserves null vs string
-  }
-  function setFilterOne(value) {
-    const current = getFilterOne();
-    const same = JSON.stringify(current) === JSON.stringify(value);
-    if (same) return; // no change
-    localStorage.setItem(FILTER_KEY, JSON.stringify(value));
-  }
+ // ==== Filter storage (filter_one) (USING sessionStorage for refresh/close clearing) ====
+ const FILTER_KEY = 'filter_one';
+ function getFilterOne() {
+    const raw = sessionStorage.getItem(FILTER_KEY);
+    return raw === null ? null : JSON.parse(raw); // preserves null vs string
+ }
+ function setFilterOne(value) {
+    const current = getFilterOne();
+    const same = JSON.stringify(current) === JSON.stringify(value);
+    if (same) return; // no change
+    sessionStorage.setItem(FILTER_KEY, JSON.stringify(value));
+ }
 
-  // ==== UI helpers ====
-  const $msgs = document.getElementById('messages');
-  const $status = document.getElementById('status');
-  const $err = document.getElementById('err');
+ // ==== UI helpers ====
+ const $msgs = document.getElementById('messages');
+ const $status = document.getElementById('status');
+ const $err = document.getElementById('err');
 
-  function addMsg(text, who = 'bot') {
-    const div = document.createElement('div');
-    div.className = `msg ${who === 'user' ? 'from-user' : 'from-bot'}`;
-    div.textContent = text;
-    $msgs.appendChild(div);
-    $msgs.scrollTop = $msgs.scrollHeight;
-  }
+ function addMsg(text, who = 'bot') {
+    const div = document.createElement('div');
+    div.className = `msg ${who === 'user' ? 'from-user' : 'from-bot'}`;
+    div.textContent = text;
+    $msgs.appendChild(div);
+    $msgs.scrollTop = $msgs.scrollHeight;
+ }
 
-  function setBusy(b) {
-    const btn = document.getElementById('send');
-    if (btn) btn.disabled = b;
-    if ($status) $status.textContent = b ? 'Thinking…' : 'Ready';
-  }
+ function setBusy(b) {
+    const btn = document.getElementById('send');
+    if (btn) btn.disabled = b;
+    if ($status) $status.textContent = b ? 'Thinking…' : 'Ready';
+ }
 
-  function showError(msg = '') { if ($err) $err.textContent = msg; }
+ function showError(msg = '') { if ($err) $err.textContent = msg; }
 
-  // ==== Networking ====
-  async function askBackend(userText) {
-    const payload = { user_query: userText };
+ // ==== Networking ====
+ async function askBackend(userText) {
+    const payload = { user_query: userText };
 
-    // include session if present
-    const sid = getSessionId();
-    if (sid) payload.session_id = sid;
+    // include session if present
+    const sid = getSessionId();
+    if (sid) payload.session_id = sid;
 
-    // include current filter_one from localStorage (even if null)
-    payload.filter_one = getFilterOne();
+    // include current filter_one from sessionStorage (even if null)
+    payload.filter_one = getFilterOne();
 
-    const res = await fetch(`${BACKEND_URL}/api/process`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const res = await fetch(`${BACKEND_URL}/api/process`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify(payload),
+    });
 
-    if (!res.ok) {
-      let bodyText = '';
-      try { bodyText = await res.text(); } catch (_) {}
-      throw new Error(`HTTP ${res.status} ${res.statusText} — ${bodyText}`);
-    }
+    if (!res.ok) {
+       let bodyText = '';
+       try { bodyText = await res.text(); } catch (_) {}
+       throw new Error(`HTTP ${res.status} ${res.statusText} — ${bodyText}`);
+    }
 
-    // Expected FastAPI schema:
-    // { result: string, session_id: string, filter_one?: string|null }
-    const data = await res.json();
+    // Expected FastAPI schema:
+    // { result: string, session_id: string, filter_one?: string|null }
+    const data = await res.json();
 
-    // sync session id
-    const receivedSid = data.session_id;
-    const currentSid = getSessionId();
-    if (receivedSid && receivedSid !== currentSid) {
-      setSessionId(receivedSid);
-    }
+    // sync session id
+    const receivedSid = data.session_id;
+    const currentSid = getSessionId();
+    if (receivedSid && receivedSid !== currentSid) {
+       setSessionId(receivedSid);
+    }
 
-    // sync filter_one (store even if null; only update if changed)
-    const incomingFilter = Object.prototype.hasOwnProperty.call(data, 'filter_one')
-      ? data.filter_one
-      : null;
-    setFilterOne(incomingFilter);
+    // sync filter_one (store even if null; only update if changed)
+    const incomingFilter = Object.prototype.hasOwnProperty.call(data, 'filter_one')
+       ? data.filter_one
+       : null;
+    setFilterOne(incomingFilter);
 
-    return data.result;
-  }
+    return data.result;
+ }
 
-  // ==== Form handling ====
-  document.getElementById('chat-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    showError('');
-    const input = document.getElementById('prompt');
-    const text = (input.value || '').trim();
-    if (!text) return;
+ // ==== Form handling ====
+ document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    showError('');
+    const input = document.getElementById('prompt');
+    const text = (input.value || '').trim();
+    if (!text) return;
 
-    addMsg(text, 'user');
-    input.value = '';
-    setBusy(true);
+    addMsg(text, 'user');
+    input.value = '';
+    setBusy(true);
 
-    try {
-      const answer = await askBackend(text);
-      addMsg(answer || '(no response)', 'bot');
-    } catch (err) {
-      console.error(err);
-      showError('Request failed. See console for details.');
-      addMsg('Sorry, something went wrong.', 'bot');
-    } finally {
-      setBusy(false);
-    }
-  });
+    try {
+       const answer = await askBackend(text);
+       addMsg(answer || '(no response)', 'bot');
+    } catch (err) {
+       console.error(err);
+       showError('Request failed. See console for details.');
+       addMsg('Sorry, something went wrong.', 'bot');
+    } finally {
+       setBusy(false);
+    }
+ });
 
-  // ==== Init ====
-  updateSidPill();
-  addMsg('Hi! Ask me anything about your documents.', 'bot');
+ // ==== Init ====
+ // **NEW LINE ADDED HERE**
+ sessionStorage.clear();
+ 
+ updateSidPill();
+ addMsg('Hi! Ask me anything about your documents.', 'bot');
 </script>
-
 
 </body>
 </html>
