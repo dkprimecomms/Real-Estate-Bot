@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RE Bot</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121830;
+      --accent: #4f7cff;
+      --accent-2: #27c3a2;
+      --text: #e8ecff;
+      --muted: #9aa3c7;
+      --danger: #ff5d6c;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1000px 600px at 80% -10%, #1a2347 0%, var(--bg) 60%);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 18px;
+      backdrop-filter: blur(6px);
+      background: linear-gradient(to bottom, rgba(18,24,48,0.9), rgba(18,24,48,0.6));
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .logo {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      display: grid; place-items: center; font-weight: 800; color: white;
+    }
+    .title { font-weight: 700; letter-spacing: 0.2px; }
+    .subtle { color: var(--muted); font-size: 0.9rem; }
+
+    .messages {
+      overflow-y: auto;
+      padding: 22px 18px 12px 18px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .msg {
+      max-width: min(720px, 82%);
+      padding: 12px 14px; line-height: 1.45;
+      border-radius: 14px; white-space: pre-wrap; word-wrap: break-word;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    }
+    .from-user { align-self: flex-end; background: #2a3566; }
+    .from-bot { align-self: flex-start; background: var(--panel); border: 1px solid rgba(255,255,255,0.06); }
+
+    .composer {
+      padding: 14px 18px; border-top: 1px solid rgba(255,255,255,0.07);
+      background: linear-gradient(to top, rgba(12,14,24,0.9), rgba(12,14,24,0.6));
+    }
+    .input-row {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      max-width: 1000px; margin: 0 auto;
+    }
+    .textbox {
+      width: 100%; padding: 12px 14px; font-size: 16px; color: var(--text);
+      background: #0e1328; border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; outline: none;
+    }
+    .textbox::placeholder { color: var(--muted); }
+    .sendbtn {
+      padding: 12px 16px; font-weight: 600; font-size: 15px; color: white;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+      border: none; border-radius: 12px; cursor: pointer; transition: filter .15s ease;
+    }
+    .sendbtn[disabled] { opacity: .75; cursor: not-allowed; }
+    .sendbtn:hover { filter: brightness(1.05); }
+
+    .statusbar {
+      display: flex; justify-content: space-between; align-items: center;
+      max-width: 1000px; margin: 6px auto 0; color: var(--muted); font-size: 12px;
+    }
+    .pill { padding: 4px 8px; border-radius: 999px; background: rgba(255,255,255,0.06); }
+    .error { color: #ffd1d6; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="logo">🧠</div>
+      <div>
+        <div class="title">Real Estate</div>
+        <div class="subtle">Ask anything related to your Properties</div>
+      </div>
+      <div style="margin-left:auto" class="subtle">Session: <span id="sid-pill" class="pill">none</span></div>
+    </div>
+
+    <div id="messages" class="messages"></div>
+
+    <div class="composer">
+      <form id="chat-form" class="input-row">
+        <input id="prompt" class="textbox" placeholder="Type your message…" autocomplete="off" />
+        <button id="send" class="sendbtn" type="submit">Send</button>
+      </form>
+      <div class="statusbar">
+        <div id="status" class="subtle">Ready</div>
+        <div id="err" class="subtle error"></div>
+      </div>
+    </div>
+  </div>
+
+ <script>
+  // ==== Config: set your backend origin if different port/origin ====
+  // In dev, always point to your FastAPI backend
+  const BACKEND_URL = 'http://localhost:8000'; // change to '' (same-origin) in prod if front+back are on same host
+
+  // ==== Session helpers ====
+  const SID_KEY = 'session_id';
+  function getSessionId() { return localStorage.getItem(SID_KEY); }
+  function setSessionId(sid) {
+    if (!sid) return;
+    const current = getSessionId();
+    if (current !== sid) {
+      localStorage.setItem(SID_KEY, sid);
+      updateSidPill();
+    }
+  }
+  function updateSidPill() {
+    const pill = document.getElementById('sid-pill');
+    if (pill) pill.textContent = getSessionId() || 'none';
+  }
+
+  // ==== Filter storage (filter_one) ====
+  const FILTER_KEY = 'filter_one';
+  function getFilterOne() {
+    const raw = localStorage.getItem(FILTER_KEY);
+    return raw === null ? null : JSON.parse(raw); // preserves null vs string
+  }
+  function setFilterOne(value) {
+    const current = getFilterOne();
+    const same = JSON.stringify(current) === JSON.stringify(value);
+    if (same) return; // no change
+    localStorage.setItem(FILTER_KEY, JSON.stringify(value));
+  }
+
+  // ==== UI helpers ====
+  const $msgs = document.getElementById('messages');
+  const $status = document.getElementById('status');
+  const $err = document.getElementById('err');
+
+  function addMsg(text, who = 'bot') {
+    const div = document.createElement('div');
+    div.className = `msg ${who === 'user' ? 'from-user' : 'from-bot'}`;
+    div.textContent = text;
+    $msgs.appendChild(div);
+    $msgs.scrollTop = $msgs.scrollHeight;
+  }
+
+  function setBusy(b) {
+    const btn = document.getElementById('send');
+    if (btn) btn.disabled = b;
+    if ($status) $status.textContent = b ? 'Thinking…' : 'Ready';
+  }
+
+  function showError(msg = '') { if ($err) $err.textContent = msg; }
+
+  // ==== Networking ====
+  async function askBackend(userText) {
+    const payload = { user_query: userText };
+
+    // include session if present
+    const sid = getSessionId();
+    if (sid) payload.session_id = sid;
+
+    // include current filter_one from localStorage (even if null)
+    payload.filter_one = getFilterOne();
+
+    const res = await fetch(`${BACKEND_URL}/api/process`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch (_) {}
+      throw new Error(`HTTP ${res.status} ${res.statusText} — ${bodyText}`);
+    }
+
+    // Expected FastAPI schema:
+    // { result: string, session_id: string, filter_one?: string|null }
+    const data = await res.json();
+
+    // sync session id
+    const receivedSid = data.session_id;
+    const currentSid = getSessionId();
+    if (receivedSid && receivedSid !== currentSid) {
+      setSessionId(receivedSid);
+    }
+
+    // sync filter_one (store even if null; only update if changed)
+    const incomingFilter = Object.prototype.hasOwnProperty.call(data, 'filter_one')
+      ? data.filter_one
+      : null;
+    setFilterOne(incomingFilter);
+
+    return data.result;
+  }
+
+  // ==== Form handling ====
+  document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    showError('');
+    const input = document.getElementById('prompt');
+    const text = (input.value || '').trim();
+    if (!text) return;
+
+    addMsg(text, 'user');
+    input.value = '';
+    setBusy(true);
+
+    try {
+      const answer = await askBackend(text);
+      addMsg(answer || '(no response)', 'bot');
+    } catch (err) {
+      console.error(err);
+      showError('Request failed. See console for details.');
+      addMsg('Sorry, something went wrong.', 'bot');
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  // ==== Init ====
+  updateSidPill();
+  addMsg('Hi! Ask me anything about your documents.', 'bot');
+</script>
+
+
+</body>
+</html>
