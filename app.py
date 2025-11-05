@@ -219,8 +219,32 @@ $output_format_instructions$
         returned_session_id, location, len(generated_output)
     )
     return generated_output, returned_session_id, prop_filter
+    
+def log(session_id: str, query:str, result:str ) -> Tuple[str, str, str]:
+    AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
+    DDB_TABLE = os.getenv("DDB_TABLE")
 
+    dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+    if not DDB_TABLE:
+        print("ERROR: DDB_TABLE environment variable is not set.")
+    else:
+        try:
+            table = dynamodb.Table(DDB_TABLE)
+            
+            response = table.update_item(
+                Key={"session_id": session_id},
+                UpdateExpression="SET User_Query = :query, User_Response = :response",
+                ExpressionAttributeValues={":query": query, ":response": result},
+            )
+            print("✅ DynamoDB update successful.")
+
+        except ClientError as e:
+            print(f"DynamoDB Error: {e.response['Error']['Message']}")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            
 @app.post("/api/process", response_model=Out)
 def process(inp: Inp):
     result_text, sid, filtered_prop  = LLMcall(inp.user_query, inp.session_id, inp.filter_one)
+    log(sid,inp.user_query, result_text)
     return Out(result=result_text, session_id=sid, filter_one= filtered_prop )
