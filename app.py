@@ -11,6 +11,7 @@ from string import Template
 import logging
 import sys
 from fastapi.responses import FileResponse
+import datetime
 
 
 logging.basicConfig(
@@ -220,21 +221,25 @@ $output_format_instructions$
     )
     return generated_output, returned_session_id, prop_filter
     
+
 def log(session_id: str, query:str, result:str ) -> Tuple[str, str, str]:
     AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
     DDB_TABLE = os.getenv("DDB_TABLE")
-
+    now = datetime.datetime.now()
+    formatted_timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    final = formatted_timestamp + " / " + session_id
     dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
     if not DDB_TABLE:
         print("ERROR: DDB_TABLE environment variable is not set.")
     else:
         try:
             table = dynamodb.Table(DDB_TABLE)
-            
-            response = table.update_item(
-                Key={"session_id": session_id},
-                UpdateExpression="SET User_Query = :query, User_Response = :response",
-                ExpressionAttributeValues={":query": query, ":response": result},
+            response = table.put_item(
+                Item = {
+                    "session_id": final,
+                    "User_Query": query,
+                    "Response": result
+                }
             )
             print("✅ DynamoDB update successful.")
 
