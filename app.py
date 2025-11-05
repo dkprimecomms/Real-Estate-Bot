@@ -72,7 +72,7 @@ Task
 Identify the property name mentioned in the user’s query and match it against the provided Allowed Property Names list.
 Return the matched property name from the list. If nothing in the query matches any name from the list, return NONE.
 
-Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia"]
+Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia", "FL Neptune Beach"]
 
 Rules
 Perform case-insensitive matching.
