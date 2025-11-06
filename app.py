@@ -172,7 +172,7 @@ $output_format_instructions$
         "modelArn": os.getenv("MODEL_ARN"),                # Reads directly from App Runner env var
         "retrievalConfiguration": {
             "vectorSearchConfiguration": {
-                "numberOfResults": 20
+                "numberOfResults": 28
             }
         },
         "generationConfiguration": {
