@@ -67,7 +67,7 @@
       background: linear-gradient(to top, rgba(12,14,24,0.9), rgba(12,14,24,0.6));
     }
     .input-row {
-      display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
       max-width: 1000px; margin: 0 auto;
     }
     .textbox {
@@ -76,13 +76,13 @@
       border-radius: 12px; outline: none;
     }
     .textbox::placeholder { color: var(--muted); }
-    .sendbtn {
+    .sendbtn, .exportbtn {
       padding: 12px 16px; font-weight: 600; font-size: 15px; color: white;
       background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
       border: none; border-radius: 12px; cursor: pointer; transition: filter .15s ease;
     }
     .sendbtn[disabled] { opacity: .75; cursor: not-allowed; }
-    .sendbtn:hover { filter: brightness(1.05); }
+    .sendbtn:hover, .exportbtn:hover { filter: brightness(1.05); }
 
     .statusbar {
       display: flex; justify-content: space-between; align-items: center;
@@ -109,6 +109,7 @@
       <form id="chat-form" class="input-row">
         <input id="prompt" class="textbox" placeholder="Type your message…" autocomplete="off" />
         <button id="send" class="sendbtn" type="submit">Send</button>
+        <button id="export" class="exportbtn" type="button">Export Chat</button>
       </form>
       <div class="statusbar">
         <div id="status" class="subtle">Ready</div>
@@ -117,133 +118,137 @@
     </div>
   </div>
 
- <script>
- // ==== Config: set your backend origin if different port/origin ====
- const BACKEND_URL = '';
+<script>
+const BACKEND_URL = '';
+const SID_KEY = 'session_id';
+function getSessionId() { return sessionStorage.getItem(SID_KEY); }
+function setSessionId(sid) {
+  if (!sid) return;
+  const current = getSessionId();
+  if (current !== sid) {
+    sessionStorage.setItem(SID_KEY, sid);
+    updateSidPill();
+  }
+}
+function updateSidPill() {
+  const pill = document.getElementById('sid-pill');
+  if (pill) pill.textContent = getSessionId() || 'none';
+}
 
- // ==== Session helpers (USING sessionStorage for refresh/close clearing) ====
- const SID_KEY = 'session_id';
- function getSessionId() { return sessionStorage.getItem(SID_KEY); }
- function setSessionId(sid) {
-    if (!sid) return;
-    const current = getSessionId();
-    if (current !== sid) {
-       sessionStorage.setItem(SID_KEY, sid);
-       updateSidPill();
-    }
- }
- function updateSidPill() {
-    const pill = document.getElementById('sid-pill');
-    if (pill) pill.textContent = getSessionId() || 'none';
- }
+const FILTER_KEY = 'filter_one';
+function getFilterOne() {
+  const raw = sessionStorage.getItem(FILTER_KEY);
+  return raw === null ? null : JSON.parse(raw);
+}
+function setFilterOne(value) {
+  const current = getFilterOne();
+  const same = JSON.stringify(current) === JSON.stringify(value);
+  if (same) return;
+  sessionStorage.setItem(FILTER_KEY, JSON.stringify(value));
+}
 
- // ==== Filter storage (filter_one) (USING sessionStorage for refresh/close clearing) ====
- const FILTER_KEY = 'filter_one';
- function getFilterOne() {
-    const raw = sessionStorage.getItem(FILTER_KEY);
-    return raw === null ? null : JSON.parse(raw); // preserves null vs string
- }
- function setFilterOne(value) {
-    const current = getFilterOne();
-    const same = JSON.stringify(current) === JSON.stringify(value);
-    if (same) return; // no change
-    sessionStorage.setItem(FILTER_KEY, JSON.stringify(value));
- }
+const $msgs = document.getElementById('messages');
+const $status = document.getElementById('status');
+const $err = document.getElementById('err');
 
- // ==== UI helpers ====
- const $msgs = document.getElementById('messages');
- const $status = document.getElementById('status');
- const $err = document.getElementById('err');
+function addMsg(text, who = 'bot') {
+  const div = document.createElement('div');
+  div.className = `msg ${who === 'user' ? 'from-user' : 'from-bot'}`;
+  div.textContent = text;
+  $msgs.appendChild(div);
+  $msgs.scrollTop = $msgs.scrollHeight;
+}
 
- function addMsg(text, who = 'bot') {
-    const div = document.createElement('div');
-    div.className = `msg ${who === 'user' ? 'from-user' : 'from-bot'}`;
-    div.textContent = text;
-    $msgs.appendChild(div);
-    $msgs.scrollTop = $msgs.scrollHeight;
- }
+function setBusy(b) {
+  const btn = document.getElementById('send');
+  if (btn) btn.disabled = b;
+  if ($status) $status.textContent = b ? 'Thinking…' : 'Ready';
+}
 
- function setBusy(b) {
-    const btn = document.getElementById('send');
-    if (btn) btn.disabled = b;
-    if ($status) $status.textContent = b ? 'Thinking…' : 'Ready';
- }
+function showError(msg = '') { if ($err) $err.textContent = msg; }
 
- function showError(msg = '') { if ($err) $err.textContent = msg; }
+async function askBackend(userText) {
+  const payload = { user_query: userText };
+  const sid = getSessionId();
+  if (sid) payload.session_id = sid;
+  payload.filter_one = getFilterOne();
 
- // ==== Networking ====
- async function askBackend(userText) {
-    const payload = { user_query: userText };
+  const res = await fetch(`${BACKEND_URL}/api/process`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 
-    // include session if present
-    const sid = getSessionId();
-    if (sid) payload.session_id = sid;
+  if (!res.ok) {
+    let bodyText = '';
+    try { bodyText = await res.text(); } catch (_) {}
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${bodyText}`);
+  }
 
-    // include current filter_one from sessionStorage (even if null)
-    payload.filter_one = getFilterOne();
+  const data = await res.json();
+  const receivedSid = data.session_id;
+  const currentSid = getSessionId();
+  if (receivedSid && receivedSid !== currentSid) {
+    setSessionId(receivedSid);
+  }
 
-    const res = await fetch(`${BACKEND_URL}/api/process`, {
-       method: 'POST',
-       headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify(payload),
-    });
+  const incomingFilter = Object.prototype.hasOwnProperty.call(data, 'filter_one')
+    ? data.filter_one
+    : null;
+  setFilterOne(incomingFilter);
 
-    if (!res.ok) {
-       let bodyText = '';
-       try { bodyText = await res.text(); } catch (_) {}
-       throw new Error(`HTTP ${res.status} ${res.statusText} — ${bodyText}`);
-    }
+  return data.result;
+}
 
-    // Expected FastAPI schema:
-    // { result: string, session_id: string, filter_one?: string|null }
-    const data = await res.json();
+// ==== Export Chat ====
+function exportChat() {
+  const messages = Array.from(document.querySelectorAll('.msg')).map(div => {
+    const role = div.classList.contains('from-user') ? 'User' : 'Bot';
+    return `${role}: ${div.textContent}`;
+  }).join('\n\n');
 
-    // sync session id
-    const receivedSid = data.session_id;
-    const currentSid = getSessionId();
-    if (receivedSid && receivedSid !== currentSid) {
-       setSessionId(receivedSid);
-    }
+  const blob = new Blob([messages], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
 
-    // sync filter_one (store even if null; only update if changed)
-    const incomingFilter = Object.prototype.hasOwnProperty.call(data, 'filter_one')
-       ? data.filter_one
-       : null;
-    setFilterOne(incomingFilter);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `chat_export_${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.txt`;
+  a.click();
 
-    return data.result;
- }
+  URL.revokeObjectURL(url);
+}
 
- // ==== Form handling ====
- document.getElementById('chat-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    showError('');
-    const input = document.getElementById('prompt');
-    const text = (input.value || '').trim();
-    if (!text) return;
+// ==== Event Handlers ====
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  showError('');
+  const input = document.getElementById('prompt');
+  const text = (input.value || '').trim();
+  if (!text) return;
 
-    addMsg(text, 'user');
-    input.value = '';
-    setBusy(true);
+  addMsg(text, 'user');
+  input.value = '';
+  setBusy(true);
 
-    try {
-       const answer = await askBackend(text);
-       addMsg(answer || '(no response)', 'bot');
-    } catch (err) {
-       console.error(err);
-       showError('Request failed. See console for details.');
-       addMsg('Sorry, something went wrong.', 'bot');
-    } finally {
-       setBusy(false);
-    }
- });
+  try {
+    const answer = await askBackend(text);
+    addMsg(answer || '(no response)', 'bot');
+  } catch (err) {
+    console.error(err);
+    showError('Request failed. See console for details.');
+    addMsg('Sorry, something went wrong.', 'bot');
+  } finally {
+    setBusy(false);
+  }
+});
 
- // ==== Init ====
- // **NEW LINE ADDED HERE**
- sessionStorage.clear();
- 
- updateSidPill();
- addMsg('Hi! Ask me anything about your documents.', 'bot');
+// Export button click
+document.getElementById('export').addEventListener('click', exportChat);
+
+// ==== Init ====
+sessionStorage.clear();
+updateSidPill();
+addMsg('Hi! Ask me anything about your documents.', 'bot');
 </script>
 
 </body>
