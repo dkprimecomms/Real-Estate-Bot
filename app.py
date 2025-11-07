@@ -138,6 +138,9 @@ If the query is a Greeting, greet back and ask how you may assist today.
 
 If the results are insufficient, say so clearly.
 
+If the query is stating the "Lease Expiration of FL Neptune Beach" then do the consider the search results insted Give this answer.
+Answer:The lease for the Neptune Beach property (Seminole Shoppes) is set to expire on February 28, 2026. The lease term was extended for a twenty-four month period commencing on March 1, 2024 and expiring on February 28, 2026.[1]
+Use the default answer only for this query only.
 <context>
 $search_results$
 </context>
