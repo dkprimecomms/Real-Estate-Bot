@@ -61,12 +61,12 @@ def extract_key(query: str) -> str:
     runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
     prompt_template = Template("""
- You are an intelligent assistant that performs three independent classifications on real-estate lease queries.
+  You are an intelligent assistant that performs two independent classifications on real-estate lease queries.
 
 ---
 
 ### Global Rules
-- Decide each task independently. The result of one task must not influence the others.
+- Decide each task independently. The result of one task must not influence the other.
 - Output valid JSON only, exactly matching the schema below. Use uppercase TRUE/FALSE and strings only.
 - If uncertain for a task, follow that task's default (Task 1 → FALSE).
 - Do not include explanations, notes, or extra fields.
@@ -76,25 +76,30 @@ def extract_key(query: str) -> str:
 ### Task 1 — Determine if the user query requires information from the *current (latest)* amendment document.
 
 Default assumption: FALSE.  
-Only mark TRUE when the question explicitly or clearly depends on the most recent controlling document.  
-When in doubt, choose FALSE.
+Only mark TRUE when the question explicitly or clearly depends on the most recent controlling document.
+
+**Important rule:**  
+Questions involving **lease options** (renewal options, extension options, purchase options, termination options, or any reference to an "option") MUST be marked TRUE, because option rights are controlled by the latest amendment.
 
 #### Classification Rules
-1. Set "requires_latest_amendment": "TRUE" only if:
-   - The query explicitly mentions “current”, “latest”, “most recent”, or “active”.
-   - The query requests information whose meaning inherently depends on the *current effective state* of the lease, such as:
-     - lease expiration / end date  
-     - renewal status or renewal term  
-     - commencement or termination date  
-   - There is no mention of summaries, comparisons, historical details, or multiple amendments.
-2. Set "requires_latest_amendment": "FALSE" for all other cases, including:
-   - Queries about rent, landlord name, tenant name, or any data that could appear in older documents.
-   - Queries that reference specific amendments, effective dates, or a historical period.
-   - Queries that request summaries, comparisons, timelines, or lists of amendments.
-   - Hypothetical, generic, or descriptive questions not tied to current controlling terms.
-   - Meta or instructional queries.
-   - Ambiguous or incomplete queries that do not clearly require the latest document.
-3. Do not infer TRUE merely because the question mentions “lease” or “amendment”.
+
+Set `"requires_latest_amendment": "TRUE"` when:
+1. The query explicitly mentions “current”, “latest”, “most recent”, or “active”.
+2. The query asks about any clause whose validity or content can be modified by newer amendments, including:
+   - lease expiration / end date  
+   - renewal status or renewal term  
+   - commencement or termination date  
+   - **ANY type of option (renewal, extension, early termination, purchase, etc.)**
+3. The query depends on the present effective state of the lease.
+4. The query does NOT request summaries, comparisons, historic information, or analysis of multiple amendments.
+
+Set `"requires_latest_amendment": "FALSE"` only when:
+- The query is about information that can be answered from older documents (e.g., rent, landlord name, tenant name).
+- The query explicitly references a past amendment (e.g., “in the second amendment”).
+- The query requests summaries, historical comparisons, timelines, or all amendments.
+- The query is generic, hypothetical, instructional, or unrelated to current controlling terms.
+
+Do not infer TRUE merely because “lease” or “amendment” appears, unless above conditions apply.
 
 ---
 
@@ -105,17 +110,17 @@ Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia", "FL Neptune
 Rules:
 1. Match case-insensitively.
 2. Partial matches are acceptable — return the full name from the list.
-3. Ignore filler words like “property”, “store”, “in”, “at”, “city”, or “of”.
+3. Ignore filler words like “property”, “store”, “in”, “at”, “city”, “location”, or “of”.
 4. Return exactly one best match; if none, return "NONE".
 5. No explanations.
 
 ---
+
 ### Output Format
-Return the two results in this JSON structure:
 
 {
   "requires_latest_amendment": "TRUE or FALSE",
-  "property_name": "Matched property name or NONE",
+  "property_name": "Matched property name or NONE"
 }
 
 ---
@@ -199,7 +204,7 @@ $output_format_instructions$
         "modelArn": os.getenv("MODEL_ARN"),               
         "retrievalConfiguration": {
             "vectorSearchConfiguration": {
-                "numberOfResults": 28
+                "numberOfResults": 20
             }
         },
         "generationConfiguration": {
