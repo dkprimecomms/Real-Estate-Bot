@@ -7,12 +7,13 @@ import os
 import boto3, json
 from botocore.exceptions import ClientError
 from string import Template
-# from dotenv import load_dotenv  <-- REMOVED FOR APP RUNNER
+from dotenv import load_dotenv
 import logging
 import sys
 from fastapi.responses import FileResponse
 import datetime
 
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,8 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("backend")
 
-# ---- In-memory session memory (per-process; swap to Redis for prod) ----
-SESSION_MEM: Dict[str, Dict[str, str]] = {}  # { session_id: {"last_property": "South Bend IN"} }
+SESSION_MEM: Dict[str, Dict[str, str]] = {}
 
 
 def is_none_like(val: Optional[str]) -> bool:
@@ -30,18 +30,14 @@ def is_none_like(val: Optional[str]) -> bool:
     return v in {"", "none", "null"}
 
 
-# ---- API setup ----
 app = FastAPI()
 
 @app.get("/")
 def serve_homepage():
-    # Get path to index.html in the same directory as this script
     current_dir = os.path.dirname(os.path.abspath(__file__))
     index_path = os.path.join(current_dir, "index.html")
-    # Make sure index.html is in your repository root
     return FileResponse(index_path, media_type="text/html")
 
-# If you truly need credentials (cookies/Authorization), list explicit origins instead of "*"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -66,34 +62,67 @@ def extract_key(query: str) -> str:
     runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
 
     prompt_template = Template("""
-You are an intelligent assistant that extracts one property name from user queries related to real estate.
+ You are an intelligent assistant that performs three independent classifications on real-estate lease queries.
 
-Task
-Identify the property name mentioned in the user’s query and match it against the provided Allowed Property Names list.
-Return the matched property name from the list. If nothing in the query matches any name from the list, return NONE.
+---
+
+### Global Rules
+- Decide each task independently. The result of one task must not influence the others.
+- Output valid JSON only, exactly matching the schema below. Use uppercase TRUE/FALSE and strings only.
+- If uncertain for a task, follow that task's default (Task 1 → FALSE).
+- Do not include explanations, notes, or extra fields.
+
+---
+
+### Task 1 — Determine if the user query requires information from the *current (latest)* amendment document.
+
+Default assumption: FALSE.  
+Only mark TRUE when the question explicitly or clearly depends on the most recent controlling document.  
+When in doubt, choose FALSE.
+
+#### Classification Rules
+1. Set "requires_latest_amendment": "TRUE" only if:
+   - The query explicitly mentions “current”, “latest”, “most recent”, or “active”.
+   - The query requests information whose meaning inherently depends on the *current effective state* of the lease, such as:
+     - lease expiration / end date  
+     - renewal status or renewal term  
+     - commencement or termination date  
+   - There is no mention of summaries, comparisons, historical details, or multiple amendments.
+2. Set "requires_latest_amendment": "FALSE" for all other cases, including:
+   - Queries about rent, landlord name, tenant name, or any data that could appear in older documents.
+   - Queries that reference specific amendments, effective dates, or a historical period.
+   - Queries that request summaries, comparisons, timelines, or lists of amendments.
+   - Hypothetical, generic, or descriptive questions not tied to current controlling terms.
+   - Meta or instructional queries.
+   - Ambiguous or incomplete queries that do not clearly require the latest document.
+3. Do not infer TRUE merely because the question mentions “lease” or “amendment”.
+
+---
+
+### Task 2 — Extract the property name from the user query.
 
 Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia", "FL Neptune Beach"]
 
-Rules
-Perform case-insensitive matching.
-A partial match is acceptable — if the user’s query contains a word or phrase similar to one of the allowed property names, return that full property name from the list.
-Ignore filler words like “property”, “store”, “in”, “at”, “city”, or “of”.
-Return only one property name that best fits the query.
-If no property name from the list appears (even partially), return NONE.
-Do not include explanations or any extra text — output only the property name or NONE.
-If the user input does not mention property name then return "NONE"
-Examples
-User Query: What is the lease expiration for IN South Bend?
-Output: South Bend IN
-User Query: What is the store name in Bloomington?
-Output: Bloomington
-User Query: Who is columba?
-Output: Columbia
-User Query: Who is the landlord?
-Output: NONE
+Rules:
+1. Match case-insensitively.
+2. Partial matches are acceptable — return the full name from the list.
+3. Ignore filler words like “property”, “store”, “in”, “at”, “city”, or “of”.
+4. Return exactly one best match; if none, return "NONE".
+5. No explanations.
 
-Extract the property name from the User Query:
-$query
+---
+### Output Format
+Return the two results in this JSON structure:
+
+{
+  "requires_latest_amendment": "TRUE or FALSE",
+  "property_name": "Matched property name or NONE",
+}
+
+---
+
+User Query:
+{$query}
 """).substitute(query=query)
 
     MODEL_ID = "us.anthropic.claude-3-haiku-20240307-v1:0"
@@ -124,38 +153,31 @@ $query
     logger.info("extract_key -> %r", text)
     return text
 
-# ---- Main KB call (Bedrock Agent Runtime) ----
+
 def LLMcall(query: str, session_id: Optional[str], prop_filter: Optional[str]) -> Tuple[str, str, str]:
-    # load_dotenv()  <-- REMOVED
-    # AWS_REGION is now correctly read from App Runner environment variables
     AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
     client = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
 
-    # Custom KB prompt template
     prompt_template = """You are a precise real-estate assistant.
 Use only the provided search results to answer the user's question.
 If the query is a Greeting, greet back and ask how you may assist today.
-
 If the results are insufficient, say so clearly.
-
-If the query is stating the "Lease Expiration of FL Neptune Beach" then do the consider the search results insted Give this answer.
-Answer:The lease for the Neptune Beach property (Seminole Shoppes) is set to expire on February 28, 2026. The lease term was extended for a twenty-four month period commencing on March 1, 2024 and expiring on February 28, 2026.[1]
-Use the default answer only for this query only.
+If the context provided is not relevant to the query, return only "False".
 <context>
 $search_results$
 </context>
-
 <question>
 $query$
 </question>
-
 $output_format_instructions$
+
 """
 
-    # 1) Extract property from this turn
-    location = (extract_key(query) or "").strip()
+    r_d = (extract_key(query) or "").strip()
+    retrival_directions = json.loads(r_d)
+    location = retrival_directions.get("property_name", "")
+    requires_latest_amendment = retrival_directions.get("requires_latest_amendment", "")
 
-    # 2) Fallback to session memory if none
     if is_none_like(location):
         if prop_filter:
             fallback = prop_filter
@@ -169,10 +191,13 @@ $output_format_instructions$
     else:
         prop_filter = location
 
-    # 3) Build KB config (put generationConfiguration INSIDE knowledgeBaseConfiguration)
+    if not is_none_like(location):
+        prop_filter = location
+
+    logger.info("Filter: %s",prop_filter)
     kb_cfg = {
-        "knowledgeBaseId": os.getenv("KNOWLEDGE_BASE_ID"),  # Reads directly from App Runner env var
-        "modelArn": os.getenv("MODEL_ARN"),                # Reads directly from App Runner env var
+        "knowledgeBaseId": os.getenv("KNOWLEDGE_BASE_ID"),
+        "modelArn": os.getenv("MODEL_ARN"),               
         "retrievalConfiguration": {
             "vectorSearchConfiguration": {
                 "numberOfResults": 28
@@ -185,14 +210,30 @@ $output_format_instructions$
         }
     }
 
-    # Apply property filter only if we have a property
+    filters = []
     if not is_none_like(location):
-        kb_cfg["retrievalConfiguration"]["vectorSearchConfiguration"]["filter"] = {
-            "equals": {"key": "property", "value": location}
-        }
+        filters.append({"equals": {"key": "property", "value": location}})
         logger.info("Using property filter for: %r", location)
     else:
         logger.info("No location filter applied")
+
+    if requires_latest_amendment == "TRUE":
+        if location == "South Bend IN":
+            amend_filter= 1
+        elif location == "Bloomington":
+            amend_filter = 1
+        elif location == "Columbia":
+            amend_filter = 1
+        elif location == "FL Neptune Beach":
+            amend_filter = 4
+        filters.append({"greaterThanOrEquals": {"key": "amendment_number", "value": amend_filter}})
+        logger.info("Using amendment filter for: %r", amend_filter)
+    else:
+        logger.info("No amendment filter applied")
+
+    if filters:
+        vector_filter = filters[0] if len(filters) == 1 else {"andAll": filters}
+        kb_cfg["retrievalConfiguration"]["vectorSearchConfiguration"]["filter"] = vector_filter
 
     request = {
         "input": {"text": query},
@@ -204,7 +245,6 @@ $output_format_instructions$
     if session_id:
         request["sessionId"] = session_id
 
-    # 4) Call Bedrock
     try:
         resp = client.retrieve_and_generate(**request)
     except ClientError as e:
