@@ -229,7 +229,7 @@ $output_format_instructions$
         elif location == "Columbia":
             amend_filter = 1
         elif location == "FL Neptune Beach":
-            amend_filter = 4
+            amend_filter = 5
         filters.append({"greaterThanOrEquals": {"key": "amendment_number", "value": amend_filter}})
         logger.info("Using amendment filter for: %r", amend_filter)
     else:
