@@ -1,4 +1,3 @@
-# app.py
 from typing import Tuple, Optional, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel
