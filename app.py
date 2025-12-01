@@ -59,7 +59,7 @@ class Out(BaseModel):
 # ---- Property extractor (Bedrock Runtime) ----
 def extract_key(query: str) -> str:
 
-    runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
+    runtime = boto3.client("bedrock-runtime", region_name="us-west-2")
     
     prompt_template = Template("""
     You are an intelligent assistant that performs two independent classifications on real-estate lease queries.
