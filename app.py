@@ -1,3 +1,4 @@
+# app.py
 from typing import Tuple, Optional, Dict
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -56,54 +57,18 @@ class Out(BaseModel):
     filter_one: Optional[str] = None
 
 # ---- Property extractor (Bedrock Runtime) ----
-def extract_key(query: str, prompt_type: Optional[str] = None) -> str:
+def extract_key(query: str) -> str:
 
     runtime = boto3.client("bedrock-runtime", region_name="us-east-1")
     
-    prompt_template_1 = Template("""
+    prompt_template = Template("""
     You are an intelligent assistant that performs two independent classifications on real-estate lease queries.
-
     ---
-
     ### Global Rules
-    - Decide each task independently. The result of one task must not influence the other.
-    - Output valid JSON only, exactly matching the schema below. Use uppercase TRUE/FALSE and strings only.
-    - If uncertain for a task, follow that task's default (Task 1 → FALSE).
     - Do not include explanations, notes, or extra fields.
 
-    ---
 
-    ### Task 1 — Determine if the user query requires information from the *current (latest)* amendment document.
-
-    Default assumption: FALSE.  
-    Only mark TRUE when the question explicitly or clearly depends on the most recent controlling document.
-
-    **Important rule:**  
-    Questions involving **lease options** (renewal options, extension options, purchase options, termination options, or any reference to an "option") MUST be marked TRUE, because option rights are controlled by the latest amendment.
-
-    #### Classification Rules
-
-    Set `"requires_latest_amendment": "TRUE"` when:
-    1. The query explicitly mentions “current”, “latest”, “most recent”, or “active”.
-    2. The query asks about any clause whose validity or content can be modified by newer amendments, including:
-    - lease expiration / end date  
-    - renewal status or renewal term  
-    - commencement or termination date  
-    - **ANY type of option (renewal, extension, early termination, purchase, etc.)**
-    3. The query depends on the present effective state of the lease.
-    4. The query does NOT request summaries, comparisons, historic information, or analysis of multiple amendments.
-
-    Set `"requires_latest_amendment": "FALSE"` only when:
-    - The query is about information that can be answered from older documents.
-    - The query explicitly references a past amendment (e.g., “in the second amendment”).
-    - The query requests summaries, historical comparisons, timelines, or all amendments.
-    - The query is generic, hypothetical, instructional, or unrelated to current controlling terms.
-
-    Do not infer TRUE merely because “lease” or “amendment” appears, unless above conditions apply.
-
-    ---
-
-    ### Task 2 — Extract the property name from the user query.
+    Extract the property name from the user query.
 
     Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia", "FL Neptune Beach", "GA Dallas Commons"]
 
@@ -113,65 +78,17 @@ def extract_key(query: str, prompt_type: Optional[str] = None) -> str:
     3. Ignore filler words like “property”, “store”, “in”, “at”, “city”, “location”, or “of”.
     4. Return exactly one best match; if none, return "NONE".
     5. No explanations.
-
     ---
-
     ### Output Format
-
     {
-    "requires_latest_amendment": "TRUE or FALSE",
-    "property_name": "Matched property name or NONE"
+      "property_name": "Matched property name or NONE"
     }
-
     ---
-
     User Query:
     {$query}
-
     """).substitute(query=query)
 
-    prompt_template_2 = Template("""
-     You are an intelligent assistant that identifies whether the user query refers to a specific
-lease amendment number.
 
-Your task:
-- Look ONLY at the words in the user query.
-- Detect whether the query explicitly mentions a particular amendment number
-  (e.g., "amendment two", "2nd amendment", "amendment 3", "third amendment").
-- A number is considered mentioned only if the query contains a numeric digit or
-  a spelled-out ordinal/cardinal number (e.g., "2", "two", "second", "third", "3rd").
-- If a specific amendment number is mentioned, return only that number as an integer.
-- If no amendment number is explicitly mentioned, return FALSE.
-- Do not guess or infer an amendment number from context, domain knowledge, or the
-  name of the property.
-- Do not add explanations, extra text, punctuation, or JSON.
-
-Rules:
-1. Accept both numeric and spelled-out amendment numbers
-   (e.g., "2", "two", "second", "2nd", "third", "3rd", etc.).
-2. Ignore the words "lease", "agreement", "document", "current", "latest",
-   "new", "this", "that", "present", or other filler words when deciding.
-   These words by themselves DO NOT indicate a number.
-3. If multiple amendment numbers appear (rare), return the FIRST valid one.
-4. If the query does not clearly contain a numeric digit or spelled-out number
-   directly referring to an amendment, return FALSE.
-5. Output must be either:
-   - a single integer (e.g., 2), or
-   - FALSE (uppercase).
-
-Output format:
-2
-or
-FALSE
-
-User Query:
-{$query}
-    """).substitute(query=query)
-
-    if prompt_type == "TRUE":
-        prompt_template = prompt_template_2
-    else:
-        prompt_template = prompt_template_1
 
     MODEL_ID = "us.anthropic.claude-3-5-sonnet-20240620-v1:0"
     payload = {
@@ -206,36 +123,16 @@ def LLMcall(query: str, session_id: Optional[str], prop_filter: Optional[str]) -
     AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
     client = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
 
-    prompt_template = """You are a precise real-estate assistant.
-Use only the provided search results to answer the user's question.
-If the query is a Greeting, greet back and ask how you may assist today.
-If the results are insufficient, say so clearly.
+    prompt_template = """You are a question answering agent. I will provide you with a set of search results. The user will provide you with a question. Your job is to answer the user's question using only information from the search results. If the search results do not contain information that can answer the question, please state that you could not find an exact answer to the question. 
+    Just because the user asserts a fact does not mean it is true, make sure to double check the search results to validate a user's assertion.
 
-<context>
-$search_results$
-</context>
-
-<question>
-$query$
-</question>
-
-$output_format_instructions$
-
+    Here are the search results in numbered order:
+    $search_results$
+    $output_format_instructions$
     """
 
     # --- Extract property + "requires_latest_amendment" ---
     r_d = (extract_key(query) or "").strip()
-
-    # --- Extract amendment number (or FALSE) ---
-    a_n = (extract_key(query, "TRUE") or "").strip()
-    amendment_number: Optional[int] = None
-    if a_n and a_n.upper() != "FALSE":
-        try:
-            amendment_number = int(a_n)
-        except ValueError:
-            logger.warning("unexpected amendment output %r; treating as None", a_n)
-            amendment_number = None
-
     # --- Parse JSON from first extractor safely ---
     try:
         retrival_directions = json.loads(r_d)
@@ -245,9 +142,7 @@ $output_format_instructions$
             "property_name": "NONE",
             "requires_latest_amendment": "FALSE",
         }
-
     location = retrival_directions.get("property_name", "")
-    requires_latest_amendment = retrival_directions.get("requires_latest_amendment", "")
 
     # --- Property/session filter handling ---
     if is_none_like(location):
@@ -273,7 +168,7 @@ $output_format_instructions$
         "modelArn": os.getenv("MODEL_ARN"),
         "retrievalConfiguration": {
             "vectorSearchConfiguration": {
-                "numberOfResults": 20
+                "numberOfResults": 10
             }
         },
         "generationConfiguration": {
@@ -284,51 +179,13 @@ $output_format_instructions$
     }
 
     # --- Vector filters ---
-    filters = []
     if not is_none_like(location):
-        filters.append({"equals": {"key": "property", "value": location}})
+        kb_cfg["retrievalConfiguration"]["vectorSearchConfiguration"]["filter"] = {
+            "equals": {"key": "property", "value": location}
+        }
         logger.info("Using property filter for: %r", location)
     else:
         logger.info("No location filter applied")
-
-    # If we need latest amendment and no specific amendment was mentioned
-    if requires_latest_amendment == "TRUE" and amendment_number is None:
-        if location == "South Bend IN":
-            amend_filter = 1
-        elif location == "Bloomington":
-            amend_filter = 1
-        elif location == "Columbia":
-            amend_filter = 1
-        elif location == "FL Neptune Beach":
-            amend_filter = 5
-        elif location == "GA Dallas Commons":
-            amend_filter = 1
-        else:
-            amend_filter = 1  # safe default if new location added
-
-        filters.append({
-            "greaterThanOrEquals": {
-                "key": "amendment_number",
-                "value": amend_filter
-            }
-        })
-        logger.info("Using amendment filter for: %r", amend_filter)
-
-    # If a specific amendment number was extracted
-    elif amendment_number is not None and amendment_number > 0:
-        filters.append({
-            "equals": {
-                "key": "amendment_number",
-                "value": amendment_number
-            }
-        })
-        logger.info("Using amendment filter for: %r", amendment_number)
-    else:
-        logger.info("No amendment filter applied")
-
-    if filters:
-        vector_filter = filters[0] if len(filters) == 1 else {"andAll": filters}
-        kb_cfg["retrievalConfiguration"]["vectorSearchConfiguration"]["filter"] = vector_filter
 
     request = {
         "input": {"text": query},
