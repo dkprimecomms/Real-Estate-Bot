@@ -95,7 +95,7 @@ def extract_key(query: str) -> str:
 
         Extract the property name from the user query.
 
-        Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia", "FL Neptune Beach", "GA Dallas Commons"]
+        Allowed Property Names: ["South Bend IN", "Bloomington", "Columbia", "FL Neptune Beach", "GA Dallas Commons","Babcock New Haven"]
 
         Rules:
         1. Match case-insensitively.
